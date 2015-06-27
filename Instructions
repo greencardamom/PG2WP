@@ -1,0 +1,313 @@
+PG2WP - translate Project Gutenberg author names to Wikipedia article names
+
+ Copyright (c) User:Green Cardamom (on en.wikipeda.org)
+ October 2014
+ License: MIT (see LICENSE file included with this package)
+
+==Description==
+
+Purpose: Given a Project Gutenberg author, find the corresponding Wikipedia article, along with other data.
+
+The program can make hard to find matches. For example given the Project Gutenberg (PG) name:
+
+	"Edwards, William H. (William Hanford), 1876-"
+
+The program automatically determines the Wikipedia name is "Big Bill Edwards" (1877-1943). The birth dates 
+and names are different, but the program determines automagically it is the same person. 
+
+Input:  a list of names taken from PG's catalog.rdf
+Output: a delineated text file using "|" as the separator
+
+ Example Input : Gilchrist, Murray, 1868-1917
+ Example Output: Robert Murray Gilchrist|Murray Gilchrist|Gilchrist, Murray, 1868-1917|1868-1917|1868-1917|1|0|Found: via search
+
+ Record Key:
+
+ Column 1: Wikipedia article name ("NA" if none).
+ Column 2: <Internal info. Can be ignored. Transitional name.>
+ Column 3: The original Gutenberg name from catalog.rdf (the input)
+ Column 4: Wikipedia birth-death dates
+ Column 5: Gutenberg birth-death dates
+ Column 6: Number of works in database (only set if a Wikipedia name was found otherwise is 0)
+ Column 7: If the WP article has a {{Gutenberg author}} template. 1= yes 0= no
+ Column 8: <Internal debugging info. How the match was made>
+
+== Installation ==
+
+ 0. Download and install Gawk 4+ if not already. "awk --version" will show installed version. Awk compiles
+    and installs easily.
+
+ 1. Unpack PG2WP to its own directory. 
+
+     Set pg.awk and works.awk executable ("chmod 755 pg.awk")
+
+     Create sym-links if desired to shorten program names for working purposes eg:
+        ln -s pg.awk pg
+        ln -s works.awk works
+
+ 2. Download and unzip the PG database and name it catalog.rdf
+
+     wget -q -O- http://www.gutenberg.org/feeds/catalog.rdf.bz2 > catalog.rdf.bz2
+     bunzip2 catalog.rdf.bz2
+
+ 3. Download, compile and install TRE agrep:
+
+	Found here: https://github.com/laurikari/tre
+
+ 4. Edit init.awk -- Change the local pathnames for PG_HOME and the external programs (wget, agrep, etc..)
+                     
+ 5. Edit pg.awk, works.awk and JSON.awk .. change the path to gawk in the top hash-bang eg. "#!/bin/awk"
+
+ 6. If using Cygwin on Windows, case-sensitivity of filenames must be enabled. See:
+
+      https://cygwin.com/cygwin-ug-net/using-specialnames.html#pathnames-casesensitive
+      https://cygwin.com/ml/cygwin/2011-05/msg00434.html
+
+== Running ==
+
+ 1. Extract the full list of authors from catalog.rdf -> catalog.auth by running these commands:
+
+     grep '<dc:creator rdf:parseType="Literal"' catalog.rdf | sort | uniq | awk '{split($0,a,">"); split(a[2],b,"<"); gsub(/&lt;/,"<",b[1]);gsub(/&gt;/,">",b[1]);gsub(/&quot;/,"\"",b[1]);gsub(/&amp;/,"\\&",b[1]); print b[1]}' | sort | uniq > authors-creator-single.auth
+     grep '<rdf:li rdf:parseType="Literal">' catalog.rdf | sort | uniq | awk '{split($0,a,">"); split(a[2],b,"<"); gsub(/&lt;/,"<",b[1]);gsub(/&gt;/,">",b[1]);gsub(/&quot;/,"\"",b[1]);gsub(/&amp;/,"\\&",b[1]); split(b[1],c,"["); print c[1]}' | sort | uniq > authors-creator-multi.auth
+     grep '<dc:contributor' catalog.rdf | sort | uniq | awk '{split($0,a,">"); split(a[2],b,"<"); gsub(/&lt;/,"<",b[1]);gsub(/&gt;/,">",b[1]);gsub(/&quot;/,"\"",b[1]);gsub(/&amp;/,"\\&",b[1]); split(b[1],c,"["); print c[1]}' | sort | uniq > authors-contributor.auth
+     cat authors-contributor.auth authors-creator-single.auth authors-creator-multi.auth | sort | uniq > catalog.auth
+
+ 2. Run pg
+
+     This example command will run the entire PG catalog 
+
+	   ./pg -k catalog.dat -z catalog.log -j catalog.auth > catalog.run
+
+     Notice the four filenames: 
+
+	1. .dat  = deliniated-text output
+        2. .log  = logging output
+        3. .auth = list of names (See step 1 above). The input.
+        4. .run  = debugging output 
+
+     In practice it makes sense to run only a subset of names, for example the first 100:
+
+	   head -n 100 catalog.auth > testrun.1-100.auth
+           ./pg -k testrun.1-100.dat -z testrun.1-100.log -j testrun.1-100.auth > testrun.1-100.run
+
+     To run the entire database takes a very long time and represents 1 million+ page downloads (mostly from Wikipedia but 
+     also Open Library at Internet Archive) taking 300+ hours, so consider doing in batches. This will break the master list 
+     into chunks of 1000 names each:
+
+	head -n 1000 catalog.auth > testrun.1-1000.auth
+	head -n 2000 catalog.auth | less -n 1000 > testrun.1001-2000.auth
+	head -n 3000 catalog.auth | less -n 1000 > testrun.2001-3000.auth
+        etc..
+
+     Then run each .auth chunk per above. For example to run the 5000 chunk:
+ 
+            ./pg -k testrun.5001-6000.dat -z testrun.5001-6000.log -j testrun.5001-6000.auth > testrun.5001-6000.run
+
+     Give each run a name, like "testrun" or "final" or date etc.. it takes about 6 - 8 hours to run 1000 names (I/O bound).
+
+     You may often want to test 1 name, in which case use generic test files like this
+ 
+	    ./pg -k test.dat -z test.log -j test.auth
+  
+     ..with test.auth containing a single name.
+
+     (Names in .auth files must be in the format which were extracted in step 1. eg. "Smith, John" is right not "John Smith")
+
+
+ 3. Manual check for False Positive and False Negative
+
+  The program is not 100% perfect due to the irregular nature of the data and Wikipedia. The program is an aid that
+  can automate finding about 80% of the names, the remaining must be done manually by following these steps. These
+  steps are important as they add missed names (False Negatives) and remove incorrect names (False Positives). Anything
+  marked "Possible" in the .log file is a potential False Negative. Anything marked "work_scan" in the .dat file is 
+  a potention False Positive. The following procedures will check these potential False Positive/Negative cases.
+
+  ---
+  A. Check all "Possible" entries for False Negatives. 
+
+    Run this command on the .log file:
+
+	grep -v Found testrun.5001-6000.log
+
+     It will output something like this:
+
+        Possible Type 5: Beeckman, Ross = René Descartes = The Last Woman by Ross Beeckman
+
+     This is saying the PG name "Beeckman, Ross" may be equal to the WP name "René Descartes" and the PG book title 
+     is "The Last Woman" (the book title will help in making the determination).
+
+     Browse to the Wikipedia page "René Descartes", compare with the author's Gutenberg book title ("The Last Woman"), and 
+     determine if it's the same person. Use best judgement and other tools (WorldCat, etc). It sometimes helps to look at 
+     the book on the Gutenberg.org website for date of publication and/or topic. Although PG2WP tries to provide a possible WP name
+     it may end up being something completely different so use common sense and clues to track it down on Wikipedia.
+     For example if it's "John P. Smith", check the disambiguation page "John Smith" to see all possible names.
+
+     If a match is determined, manually edit the .dat file for that entry. Fill in field #1 (WP name), 
+     field #4 (WP birth-death) and the last field change to:
+
+	Found: via manual
+
+     For example, if this record is determined to have a Wikipedia name:
+
+	NA|William A. Canfield|Canfield, William A., 1840-||1840-|0|0|Possible Type 1: William Canfield
+
+     Change to:
+
+        William A. Canfield|William A. Canfield|Canfield, William A., 1840-|1840-1910|1840-|0|0|Found: via manual
+
+     The "Possible Type #" just refers to the spot in the .awk code that generated the Possible message.
+
+     If a Possible is found not to match, then just ignore it and move on the next Possible entry in the log file.
+
+  ---
+  B. Check special-case False Positives in the .dat file. 
+
+    Run these commands:
+
+        grep WLH            file.dat
+        grep template       file.dat
+
+     There may be 0 grep results since these are rare cases. If there are some, Quickly scan the names and dates to ensure 
+     there are no obvious bloopers. Check the Wikipedia page to be sure. Often authors have pseudonyms for WLH ("What Links Here"), 
+     so check Wikipedia even if the names don't seem to match on first glance. 
+
+     If you find a False Positive, follow procedure in Step C. on how to mark something as a False Positive.
+
+  ---
+  C. Check for work_scan False Positives
+
+     Run this command on the .dat file:
+
+        grep work_scan file.dat | awk -F"|" '{if($4 != "") {if($5 == "" && $7 == 0) print $0}}'
+
+     These records require checking Wikipedia manually as False Positives show up here. For each Wikipedia name (first
+     field), check the Wikipedia article and make sure it really is the same as the book author on Gutenberg. Use best 
+     judgement. 
+  
+     When a False Positive is found, edit the .dat file change the first field to "NA", change the 4th field to empty, 
+     and change the last field to:
+
+	False Positive: <username>
+
+     Where <username> is what used to be in field #1.
+  
+     For example, if it's determined this record is a False Positive:
+
+	George Q. Cannon|George Q. Cannon|Cannon, George Q.|1827-1901||0|0|Found: via work_scan OpenL
+  
+     Change to:
+	
+	NA|George Q. Cannon|Cannon, George Q.|||0|0|False Positive: George Q. Cannon
+
+     If a record already has a False Positive, then add a second one separated by a " ; " for example:
+
+	NA|Thomas Bull|Bull, Thomas|||0|0|False Positive: Thomas Bull ; Tom Bull
+
+     I sometimes forget to null-out the date field (4th field). This command will find those mistakes:
+
+	grep "False" file.dat | awk -F"|" '{if($4 != "") print $0}'
+
+  ---
+  D. Check Wikipedia names with no birth-death Categories. 
+
+     Run this command on the .dat file:
+
+        awk -F"|" '{if($1 != "NA") {if($4 == "") print $0}}' file.dat
+
+  ---
+  E. Check single-word names. 
+
+     Run this command on the .dat file
+
+        awk -F"|" '{c=split($2,a," "); if(c==1) print $0}' file.dat
+
+
+ 4. Create match database
+
+   Match files are a database of all the finds, possibles and false positives. The purpose of match files is so that
+   future runs of PG2WP can skip entries that have already been found or marked possible / false positive. 
+
+   First, backup the existing match* files so they don't get overwritten and lost.
+
+   Run these commands after all the steps above have been completed:
+
+        awk -F"|" '/False Positive/{split($8,a,":"); printf("%s :%s\n",$3,a[2])}' catalog.dat > match-false-positive
+        awk -F"|" '{if($1 != "NA" && $1 != "") {printf("%s : %s\n",$3,$1)}}' catalog.dat > match-found
+
+        awk -F":" '/Possible/{split($2,a,"="); printf("%s : %s\n",a[1],a[2])}' final.*.log | sort | uniq > match-possible
+
+          Here are the historic .log files used in building match-possible from scratch (">" vs ">>") 
+
+  	    final.*.log p2final.*.log fp.log pass2.*.log pass2p2.*.log
+
+   Notice: the first two commands operate on the .dat file(s) while the last on the .log file(s). You can specify the files
+           individually or with wildcards as in above example.
+
+   List of log file sets here for tracking purposes. This explains the runs I did:
+
+     final.* -- for authors-creator-single.auth in 1000 name chunks.
+     p2final.* -- for authors-contributor.auth + authors-creator-multi.auth in 1000 name chunks.
+     fp.log -- rerun on a small set of names (those marked False Positive)
+     pass2.*.log -- rerun of the final.* set after I made modifications to the algorithms
+     pass2p2.*.log -- rerun of the p2final.* for same reason as pass2.*
+
+
+ 5. Compare with existing Wikipedia database
+
+   This will find articles on Wikiupedia that have a {{gutenberg author}} template but have been missed in the steps above.
+ 
+   This step requires downloading Auto Wiki Browser from Wikipedia, as well as a copy of the latest snapshot of the entire
+   Wikipedia database. Using Tools->Database scanner, find all Wikipedia articles whioh have {{Gutenberg author}} template.
+   Be sure to use a regex expression like [Gg]utenberg[ ]template 
+   Create a list of the names AWB finds. We'll call it "awb-list". Then create a list of names found in the steps above using this
+   command on your master .dat file
+
+		awk -F"|" '{if($1 != "NA") print $1}' catalog.dat | sort > pg-list
+
+   Compare the two lists to find the names uniqe to awb-list. 
+
+		grep -vxF -f pg-list awb-list > awb-list-uniq
+
+   Then manually go through this list and update catalog.dat using a procedure similar described in step 3.A - some of these will
+   be book articles and can be skipped. 
+
+
+== pg.stats ==
+
+A stats file is generated which contains the number of page downloads for each run of the program.
+
+To check number of articles with/without Gutenberg templates
+
+	awk -F"|" '{if($1 != "NA") {if($7 != "1") i++}}END{print i}' file.dat
+
+To check records where Gutenberg date is different from Wikipedia date
+
+	awk -F"|" '{if($1 != "NA") {if($4 != $5) print $0} }' catalog.dat
+
+== works.awk ==
+
+works.awk is a separate utility that will show all works in the PG database by an author. The author name must be in the 
+PG format ie. the string from authors.txt
+
+	Example: ./works "Henty, G. A. (George Alfred), 1832-1902"	
+
+It shows the complete record for the book. 
+
+== Wikipedia API info == 
+
+http://www.mediawiki.org/wiki/API:Parsing_wikitext
+http://en.wikipedia.org/w/api.php?action=help&modules=main
+
+To get wikilinks in an article
+wget -q -O- "http://en.wikipedia.org/w/api.php?action=parse&page=Aaron_Hill&prop=links&format=json"
+
+To parse
+/bin/echo -e "file\n" | awk -f JSON.awk
+
+To get transclusion titles in a template (this stops at 500)
+wget -q -O- "http://en.wikipedia.org/w/api.php?action=query&list=embeddedin&eititle=Template:Librivox_author&eilimit=4000&blfilterredir=redirects&continue=&format=json&utf8=1&maxlag=5&eifilterredir=nonredirects"
+
+
+== External source ==
+JSON.awk
+  https://github.com/step-/JSON.awk
